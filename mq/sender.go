@@ -115,7 +115,8 @@ func NewSender(endpoint, queue string, confirmTimeout time.Duration) (*Sender, e
 // Publish sends a message with an optional delay.
 // delay = 0 → immediate delivery
 // delay > 0 → delayed delivery via LavinMQ
-func (s *Sender) Publish(payload []byte, delay time.Duration) error {
+// It also specifies whether the message sent is being replayed so that the consuming workflow will know about it
+func (s *Sender) Publish(replay bool, payload []byte, delay time.Duration) error {
     if len(payload) == 0 {
         return errors.New("payload cannot be empty")
     }
@@ -133,6 +134,7 @@ func (s *Sender) Publish(payload []byte, delay time.Duration) error {
 
     headers := amqp091.Table{
         "x-delay": int32(ms), // LavinMQ delayed exchange reads only 32‑bit integers for the delay value
+	"x-replay": bool(replay),
     }
 
     err := s.channel.Publish(

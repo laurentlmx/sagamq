@@ -74,7 +74,7 @@ func TestPublish_EmptyPayload(t *testing.T) {
         channel: &mockChannel{},
     }
 
-    err := s.Publish([]byte{}, 0)
+    err := s.Publish(false, []byte{}, 0)
     if err == nil || err.Error() != "payload cannot be empty" {
         t.Fatalf("expected empty payload error, got %v", err)
     }
@@ -85,7 +85,7 @@ func TestPublish_NegativeDelay(t *testing.T) {
         channel: &mockChannel{},
     }
 
-    err := s.Publish([]byte("data"), -1)
+    err := s.Publish(false, []byte("data"), -1)
     if err == nil || err.Error() != "delay cannot be negative" {
         t.Fatalf("expected negative delay error, got %v", err)
     }
@@ -96,7 +96,7 @@ func TestPublish_NoChannel(t *testing.T) {
         channel: nil,
     }
 
-    err := s.Publish([]byte("data"), 0)
+    err := s.Publish(false, []byte("data"), 0)
     if err == nil || err.Error() != "broker channel is not initialized" {
         t.Fatalf("expected channel error, got %v", err)
     }
@@ -112,7 +112,7 @@ func TestPublish_PublishFailure(t *testing.T) {
         confirms: make(chan amqp091.Confirmation, 1),
     }
 
-    err := s.Publish([]byte("data"), 0)
+    err := s.Publish(false, []byte("data"), 0)
     if err == nil || err.Error() != "publish failed: publish failed" {
         t.Fatalf("expected publish failure, got %v", err)
     }
@@ -129,7 +129,7 @@ func TestPublish_ConfirmAck(t *testing.T) {
         confirmTimeout: time.Second,
     }
 
-    err := s.Publish([]byte("data"), 0)
+    err := s.Publish(false, []byte("data"), 0)
     if err != nil {
         t.Fatalf("expected success, got %v", err)
     }
@@ -146,7 +146,7 @@ func TestPublish_ConfirmNack(t *testing.T) {
         confirmTimeout: time.Second,
     }
 
-    err := s.Publish([]byte("data"), 0)
+    err := s.Publish(false, []byte("data"), 0)
     if err == nil || err.Error() != "message was nacked by broker" {
         t.Fatalf("expected nack error, got %v", err)
     }
@@ -156,13 +156,13 @@ func TestPublish_ConfirmTimeout(t *testing.T) {
     mock := &mockChannel{}
     confirmCh := make(chan amqp091.Confirmation) // no ack sent
 
-    c := &Sender{
+    s := &Sender{
         channel:  mock,
         confirms: confirmCh,
         confirmTimeout: 50 * time.Millisecond,
     }
 
-    err := c.Publish([]byte("data"), 0)
+    err := s.Publish(false, []byte("data"), 0)
     if err == nil || err.Error() != "publish confirmation timeout after 50ms" {
         t.Fatalf("expected timeout error, got %v", err)
     }
