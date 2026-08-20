@@ -3,10 +3,13 @@ package mq
 import (
     "context"
     "errors"
+    "log/slog"
+    "os"
     "testing"
     "time"
 
     "github.com/rabbitmq/amqp091-go"
+    "github.com/laurentlmx/sagamq/workflows"
 )
 
 // -----------------------------------------------------------------------------
@@ -84,17 +87,31 @@ func TestNewReceiver_ConnectionFailure(t *testing.T) {
 // Consume() tests
 // -----------------------------------------------------------------------------
 
-func TestReceiverConsume_NilHandler(t *testing.T) {
+var testLogger = slog.New(slog.NewTextHandler(os.Stdout, nil))
+
+func TestReceiverConsume_NilWorkflowEngine(t *testing.T) {
     r := &Receiver{}
-    err := r.Consume(nil, nil)
-    if err == nil || err.Error() != "handler cannot be nil" {
-        t.Fatalf("expected handler error, got %v", err)
+    err := r.Consume(nil, nil, nil, "")
+    if err == nil || err.Error() != "workflow engine cannot be nil" {
+        t.Fatalf("expected workflow engine error, got %v", err)
+    }
+}
+
+func TestReceiverConsume_NoStartTask(t *testing.T) {
+    r := &Receiver{}
+    engine, _ := workflows.NewWorkflowEngine("", []workflows.Task{}, nil, testLogger)
+
+    err := r.Consume(nil, nil, engine, "")
+    if err == nil || err.Error() != "start task name cannot be empty" {
+        t.Fatalf("expected start task error, got %v", err)
     }
 }
 
 func TestReceiverConsume_NilChannel(t *testing.T) {
     r := &Receiver{}
-    err := r.Consume(nil, func(context.Context, []byte, any) error { return nil })
+    engine, _ := workflows.NewWorkflowEngine("", []workflows.Task{}, nil, testLogger)
+
+    err := r.Consume(nil, nil, engine, "Task1")
     if err == nil || err.Error() != "consumer channel is not initialized" {
         t.Fatalf("expected channel error, got %v", err)
     }
@@ -106,8 +123,9 @@ func TestReceiverConsume_QosFailure(t *testing.T) {
     }
 
     r := &Receiver{channel: fake}
+    engine, _ := workflows.NewWorkflowEngine("", []workflows.Task{}, nil, testLogger)
 
-    err := r.Consume(nil, func(context.Context, []byte, any) error { return nil })
+    err := r.Consume(nil, nil, engine, "Task1")
     if err == nil || err.Error() != "failed to set QoS: qos failed" {
         t.Fatalf("unexpected error: %v", err)
     }
@@ -121,13 +139,15 @@ func TestReceiverConsume_ConsumeFailure(t *testing.T) {
 
     r := &Receiver{channel: fake}
 
-    err := r.Consume(nil, func(context.Context, []byte, any) error { return nil })
+    engine, _ := workflows.NewWorkflowEngine("", []workflows.Task{}, nil, testLogger)
+
+    err := r.Consume(nil, nil, engine, "Task1")
     if err == nil || err.Error() != "failed to start consuming: consume failed" {
         t.Fatalf("unexpected error: %v", err)
     }
 }
 
-func TestReceiverConsume_HandlerCallAndAck(t *testing.T) {
+func TestReceiverConsume_WorkflowExecutionAndAck(t *testing.T) {
     fake := &FakeConsumerChannel{
         Deliveries: make(chan amqp091.Delivery, 1),
     }
@@ -137,24 +157,23 @@ func TestReceiverConsume_HandlerCallAndAck(t *testing.T) {
         channel: fake,
     }
 
-    err := r.Consume(nil, func(ctx context.Context, body []byte, replay any) error {
-        if string(body) != "hello" {
-            t.Fatalf("unexpected body: %s", string(body))
-        }
-        if replay.(int32) != 42 {
-            t.Fatalf("unexpected replay header: %v", replay)
-        }
+    task, _ := workflows.NewTask("Task1", func(ctx context.Context, c *workflows.Context, logger  *slog.Logger) error {
         return nil
-    })
+    }, nil)
+
+    engine, _ := workflows.NewWorkflowEngine("", []workflows.Task{task}, nil, testLogger)
+
+    err := r.Consume(context.Background(), nil, engine, "Task1")
     if err != nil {
         t.Fatalf("unexpected error: %v", err)
     }
 
     fa := &FakeAcknowledger{}
     fake.Deliveries <- amqp091.Delivery{
-        Body: []byte("hello"),
+	MessageId: "My message",
+        Body: []byte("some message payload"),
         Headers: amqp091.Table{
-            "x-replay": int32(42),
+            "x-replay": bool(false),
         },
 	Acknowledger: fa,
     }
@@ -166,7 +185,7 @@ func TestReceiverConsume_HandlerCallAndAck(t *testing.T) {
     }
 }
 
-func TestReceiverConsume_HandlerErrorAndNack(t *testing.T) {
+func TestReceiverConsume_WorkflowErrorAndNack(t *testing.T) {
     fake := &FakeConsumerChannel{
         Deliveries: make(chan amqp091.Delivery, 1),
     }
@@ -176,19 +195,24 @@ func TestReceiverConsume_HandlerErrorAndNack(t *testing.T) {
         channel: fake,
     }
 
-    err := r.Consume(nil, func(ctx context.Context, body []byte, replay any) error {
-        return errors.New("Handler failure")
-    })
+    task, _ := workflows.NewTask("FailingTask", func(ctx context.Context, c *workflows.Context, logger  *slog.Logger) error {
+        return errors.New("Task failed")
+    }, nil)
+
+    engine, _ := workflows.NewWorkflowEngine("", []workflows.Task{task}, nil, testLogger)
+
+    err := r.Consume(context.Background(), nil, engine, "FailingTask")
     if err != nil {
         t.Fatalf("unexpected error: %v", err)
     }
 
     fa := &FakeAcknowledger{}
     fake.Deliveries <- amqp091.Delivery{
-        Body: []byte("hello"),
+        MessageId: "My message",
+        Body: []byte("some message payload"),
         Headers: amqp091.Table{
-            "x-replay": int32(42),
-        },
+            "x-replay": bool(false),
+         },
 	Acknowledger: fa,
     }
 

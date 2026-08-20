@@ -5,9 +5,10 @@ import (
     "fmt"
 
     "github.com/rabbitmq/amqp091-go"
+    "github.com/laurentlmx/sagamq/workflows"
 )
 
-type ConsumerChannel interface {
+type ConsumerChannel interface { // This interface declaration is for tests purpose
     Qos(prefetchCount, prefetchSize int, global bool) error
     Consume(queue, consumer string, autoAck, exclusive, noLocal, noWait bool, args amqp091.Table) (<-chan amqp091.Delivery, error)
     Close() error
@@ -62,12 +63,18 @@ func NewReceiver(endpoint, queue string) (*Receiver, error) {
     }, nil
 }
 
-func (r *Receiver) Consume(ctx context.Context, handler func(context.Context, []byte, any) error) error {
-    if handler == nil {
-        return fmt.Errorf("handler cannot be nil")
+func (r *Receiver) Consume(ctx context.Context, wfCtx *workflows.Context, wfEngine *workflows.WorkflowEngine, wfStartTaskName string) error {
+    if wfEngine == nil {
+        return fmt.Errorf("workflow engine cannot be nil")
+    }
+    if wfStartTaskName == "" {
+        return fmt.Errorf("start task name cannot be empty")
     }
     if r.channel == nil {
         return fmt.Errorf("consumer channel is not initialized")
+    }
+    if wfCtx == nil {
+	wfCtx = workflows.NewContext()
     }
 
     // Ensure we process one message at a time
@@ -91,19 +98,19 @@ func (r *Receiver) Consume(ctx context.Context, handler func(context.Context, []
     go func() {
         for msg := range deliveries { // Keeps listening for new messages as long as the receiver is running
             // Extract x-replay header if present
-            var replay any
-            if msg.Headers != nil {
-                if v, ok := msg.Headers["x-replay"]; ok {
-                    replay = v
-                }
-            }
+	    replay := false
+	    if v, ok := msg.Headers["x-replay"].(bool); ok {
+    		replay = v
+	    }
 
-            // Pass both body and replay value to handler
-            if err := handler(ctx, msg.Body, replay); err != nil {
+            // launch the workflow with both message body and replay value added to its context
+	    wfCtx.Set("replay", replay)
+	    wfCtx.Set(msg.MessageId, msg.Body)
+            if err := wfEngine.Run(ctx, wfStartTaskName, wfCtx); err != nil {
                 _ = msg.Nack(false, false) // Assuming messages are sent to DLX rather than dropped...
                 continue
             }
-	    _ = msg.Ack(false)
+	    _ = msg.Ack(true)
         }
     }()
 
