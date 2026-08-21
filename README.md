@@ -1,6 +1,6 @@
 The goal of **SagaMQ** is to provide a **simple solution to build and run workflows with the necessary features to cover a wide range of processing needs**.
 
-To keep the framework simple as well as fast and with minimal CPU and RAM consumption, **the following choices were made** :
+To keep the framework simple (with less than 600 code lines) as well as fast and with minimal CPU and RAM consumption, **the following choices were made** :
 - The framework is written in **Go**
 - Workflows and associated runtime engine are **stateless**, meaning that workflow tasks are responsible for data persistency when necessary
 - Any asynchronous communication between workflows relies on **LavinMQ** (chosen for its capacity to deliver messages with a delay when needed)
